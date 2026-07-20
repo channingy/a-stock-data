@@ -59,7 +59,7 @@ def fetch_daily_history_mootdx(code, exchange="SH"):
     """
     try:
         from mootdx.quotes import Quotes
-        client = Quotes.factory("tcp", "223.68.206.204:7702")
+        client = Quotes.factory(market='std', server='223.68.206.204:7702')
         
         # frequency=4 = 日线
         bars_per_call = 800

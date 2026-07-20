@@ -29,7 +29,7 @@ def fetch_today_daily(code, exchange="SH"):
     """通过 mootdx 拉取单只ETF的当日日线数据"""
     try:
         from mootdx.quotes import Quotes
-        client = Quotes.factory("tcp", "223.68.206.204:7702")
+        client = Quotes.factory(market='std', server='223.68.206.204:7702')
         
         # 拉取最近3天的数据，确保包含当天
         bars = client.bars(

@@ -81,7 +81,7 @@ def fetch_etf_list_fallback():
     try:
         from mootdx.quotes import Quotes
         
-        client = Quotes.factory("tcp", "223.68.206.204:7702")
+        client = Quotes.factory(market='std', server='223.68.206.204:7702')
         
         etfs = []
         
