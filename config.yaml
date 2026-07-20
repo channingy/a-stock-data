@@ -1,0 +1,71 @@
+# ============================================================
+# A股数据采集系统 — 全局配置
+# 存放位置: /Users/channing/Work/Trade/a-stock-data/config.yaml
+# ============================================================
+
+# 数据存储路径（相对于项目根目录）
+storage:
+  db_path: "./data/market.db"
+  parquet_dir: "./data/parquet/"
+  parquet_compression: "ZSTD"
+  parquet_compression_level: 6
+
+# 数据源限流配置
+data_sources:
+  eastmoney:
+    min_interval: 1.0        # 最小请求间隔(秒)
+    jitter: [0.1, 0.5]       # 随机抖动范围
+    max_retries: 3
+    timeout: 15
+  
+  tencent:
+    batch_size: 500          # 单次批量请求最大代码数
+    timeout: 10
+  
+  mootdx:
+    call_interval: 0.5       # 每次调用间隔(秒)
+    bars_per_call: 800       # 每次返回K线条数
+    batch_sleep: 5           # 每批(100只)后休息(秒)
+    timeout: 30
+  
+  baidu:
+    call_interval: 0.3
+    timeout: 10
+
+# 数据采集
+collection:
+  history:
+    years: 5                 # 默认显示值（实际拉取全量）
+    batch_size: 100          # 每批处理的品种数量
+    batch_sleep: 5           # 每批之间休息(秒)
+  
+  minute:
+    enabled: false           # 默认不自动拉取分钟数据
+    frequencies: [60]        # 仅60分钟K线（近1年），其他按需查询
+    years: 1
+
+# 技术指标
+indicators:
+  ma: [5, 10, 20, 60]
+  boll: [20, 2]
+  macd: [12, 26, 9]
+  kdj: [9, 3, 3]
+  rsi: [6, 12, 24]
+
+# 定时任务
+scheduler:
+  daily_incremental:
+    time: "22:00"
+    timezone: "Asia/Shanghai"
+  
+  weekly_verify:
+    day_of_week: "FRI"       # 周五
+    time: "23:00"
+    timezone: "Asia/Shanghai"
+
+# 日志
+logging:
+  level: "INFO"
+  dir: "./logs"
+  max_bytes: 10485760
+  backup_count: 10
