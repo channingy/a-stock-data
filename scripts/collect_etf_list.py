@@ -84,7 +84,76 @@ def fetch_etf_list_from_eastmoney():
         logger.error("requests 模块不可用")
         return []
     except Exception as e:
-        logger.error(f"东财API获取失败: {e}")
+        logger.warning(f"东财API获取失败: {e}，尝试腾讯财经备选方案...")
+        return fetch_etf_list_from_tencent()
+
+
+def fetch_etf_list_from_tencent():
+    """通过腾讯财经批量行情接口获取ETF列表（备选方案）
+
+    扫描所有可能的ETF代码范围(51xxxx, 58xxxx, 159xxx, 15xxxx, 16xxxx)，
+    通过腾讯行情接口批量查询，筛选出有有效价格的品种。
+    """
+    logger.info("使用腾讯财经备选方案获取ETF列表...")
+
+    try:
+        import requests
+
+        # 定义ETF代码范围
+        ranges = [
+            ("sh", 510000, 519999),  # 沪ETF
+            ("sh", 588000, 588999),  # 科创板ETF
+            ("sz", 159000, 159999),  # 深ETF
+            ("sz", 150000, 150999),  # 深LOF/ETF
+            ("sz", 160000, 169999),  # 深LOF
+        ]
+
+        all_candidates = []
+        for prefix, start, end in ranges:
+            for i in range(start, end + 1):
+                all_candidates.append(f"{prefix}{i}")
+
+        logger.info(f"扫描 {len(all_candidates)} 个代码...")
+
+        # 分批查询（每批500个）
+        found = {}
+        batch_size = 500
+        for batch_start in range(0, len(all_candidates), batch_size):
+            batch = all_candidates[batch_start : batch_start + batch_size]
+            symbols = ",".join(batch)
+            url = f"https://qt.gtimg.cn/q={symbols}"
+            resp = requests.get(url, timeout=15)
+            resp.encoding = "gbk"
+
+            for line in resp.text.strip().split(";"):
+                if "=" not in line:
+                    continue
+                parts = line.split("~")
+                if len(parts) < 5:
+                    continue
+                code = parts[2]
+                name = parts[1]
+                price = parts[3]
+                try:
+                    float(price)
+                    found[code] = {"name": name, "price": price}
+                except ValueError:
+                    pass
+
+        # 筛选ETF
+        etfs = []
+        for code, info in found.items():
+            if code.startswith(("51", "58", "159", "150", "16")):
+                exchange = "SH" if code.startswith(("51", "58")) else "SZ"
+                etfs.append(
+                    {"code": code, "name": info["name"], "exchange": exchange}
+                )
+
+        logger.info(f"腾讯备选方案获取到 {len(etfs)} 只ETF")
+        return etfs
+
+    except Exception as e:
+        logger.error(f"腾讯备选方案获取失败: {e}")
         return []
 
 
