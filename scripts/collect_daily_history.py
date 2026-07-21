@@ -61,39 +61,39 @@ def save_progress(completed_codes):
         )
 
 
+def _ensure_no_proxy():
+    """确保 NO_PROXY 环境变量已设置，绕过系统代理"""
+    if "NO_PROXY" not in os.environ:
+        os.environ["NO_PROXY"] = "*"
+        os.environ["no_proxy"] = "*"
+
+
 def fetch_daily_history_eastmoney(code, exchange="SH"):
     """通过东财 push2his API 拉取单只ETF的全部历史日线
 
-    Args:
-        code: 6位代码如 '510050'
-        exchange: 'SH' 或 'SZ'
-
-    Returns:
-        list of dicts with OHLCV data, or None on failure
+    使用 urllib 而非 requests，避免系统代理干扰。
     """
     try:
-        import requests
+        import urllib.request
+        import json
+        _ensure_no_proxy()
 
         secid = f"1.{code}" if exchange == "SH" else f"0.{code}"
 
-        url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
-        params = {
-            "secid": secid,
-            "fields1": "f1,f2,f3,f4,f5,f6",
-            "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
-            "klt": 101,
-            "fqt": 1,
-            "beg": 0,
-            "end": 20500000,
-            "smplct": 0,
-            "lmt": 10000,
-        }
+        url = (
+            "https://push2his.eastmoney.com/api/qt/stock/kline/get?"
+            f"secid={secid}"
+            "&fields1=f1,f2,f3,f4,f5,f6"
+            "&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61"
+            "&klt=101&fqt=1&beg=0&end=20500000&smplct=0&lmt=10000"
+        )
 
-        resp = requests.get(url, params=params, timeout=15, headers={
+        req = urllib.request.Request(url, headers={
             "Referer": "https://quote.eastmoney.com/",
-            "User-Agent": "Mozilla/5.0",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         })
-        data = resp.json()
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
 
         if "data" not in data or "klines" not in data["data"]:
             return None
@@ -128,23 +128,22 @@ def fetch_daily_history_tencent(code, exchange="SH"):
     """通过腾讯财经 API 拉取单只ETF的历史日线（备选）
 
     腾讯接口单次最多返回2000根K线（约8年）。
-
-    Args:
-        code: 6位代码如 '510050'
-        exchange: 'SH' 或 'SZ'
-
-    Returns:
-        list of dicts with OHLCV data, or None on failure
+    使用 urllib 避免系统代理干扰。
     """
     try:
-        import requests
+        import urllib.request
+        import json
+        _ensure_no_proxy()
 
         prefix = "sh" if exchange == "SH" else "sz"
         symbol = f"{prefix}{code}"
 
         url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={symbol},day,,,{2000},"
-        resp = requests.get(url, timeout=15)
-        data = resp.json()
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0",
+        })
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
 
         klines = data.get("data", {}).get(symbol, {}).get("day", [])
         if not klines:
@@ -197,12 +196,11 @@ def main():
     logger.info("=" * 60)
 
     # 绕过系统代理（macOS科学上网工具拦截东财/腾讯API）
-    os.environ["NO_PROXY"] = "*"
-    os.environ["no_proxy"] = "*"
+    _ensure_no_proxy()
 
     # 初始化
     con = init_database()
-    rate_limiter = MootdxRateLimiter(call_interval=1.0, batch_size=50, batch_sleep=10)
+    rate_limiter = MootdxRateLimiter(call_interval=0.5, batch_size=100, batch_sleep=10)
 
     # 获取ETF列表
     etfs = con.execute(
