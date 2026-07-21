@@ -174,12 +174,7 @@ def fetch_daily_history_tencent(code, exchange="SH"):
 
 
 def fetch_daily_history_with_fallback(code, exchange="SH"):
-    """优先东财，失败则用腾讯备选"""
-    records = fetch_daily_history_eastmoney(code, exchange)
-    if records:
-        return records
-
-    logger.warning(f"{code} 东财失败，尝试腾讯备选...")
+    """直接调用腾讯备选（东财API已被封禁）"""
     return fetch_daily_history_tencent(code, exchange)
 
 
