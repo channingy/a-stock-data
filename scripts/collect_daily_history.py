@@ -59,7 +59,7 @@ def _ensure_no_proxy():
         os.environ["no_proxy"] = "*"
 
 
-def sleep_random(min_sec=1, max_sec=5):
+def sleep_random(min_sec=3, max_sec=8):
     delay = random.uniform(min_sec, max_sec)
     time.sleep(delay)
 
@@ -164,7 +164,7 @@ def main():
                 if consecutive_failures > 10:
                     logger.warning("连续失败过多，暂停10秒...")
                     time.sleep(10)
-                sleep_random(1, 3)
+                sleep_random(3, 5)
                 continue
 
             consecutive_failures = 0
@@ -217,7 +217,7 @@ def main():
             consecutive_failures += 1
 
         # 随机延迟 1-5 秒，避免高频被封
-        sleep_random(1, 5)
+        sleep_random(3, 8)
 
     save_progress(completed_codes)
 
