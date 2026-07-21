@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """Phase 2: 历史日线数据全量拉取
 
-数据源: 腾讯财经 API（2000条/只，约8年历史）
-东财API当前被封，暂不使用。
+数据源: 腾讯财经 API (最多2000条/只，约8年历史)
+东财API已永久封禁。
+
+防封策略:
+  - 每只请求间隔 3-8 秒随机延迟
+  - 每100只额外暂停30秒
+  - 连续失败10次暂停60秒
+  - 使用 curl 替代 urllib (规避 urllib 连接复用触发反爬)
 
 用法:
   cd /Users/channing/Work/Trade/a-stock-data
@@ -53,58 +59,61 @@ def save_progress(completed_codes):
         }, f)
 
 
-def _ensure_no_proxy():
-    if "NO_PROXY" not in os.environ:
-        os.environ["NO_PROXY"] = "*"
-        os.environ["no_proxy"] = "*"
-
-
 def sleep_random(min_sec=3, max_sec=8):
     delay = random.uniform(min_sec, max_sec)
+    logger.debug(f"  等待 {delay:.1f} 秒...")
     time.sleep(delay)
 
 
 def fetch_daily_history_tencent(code, exchange="SH"):
-    """通过腾讯财经 API 拉取单只ETF的历史日线（最多2000条，约8年）"""
-    _ensure_no_proxy()
-    import urllib.request
-    import json
-
+    """通过 curl 调用腾讯财经 API 拉取单只ETF的历史日线
+    
+    使用 curl 而非 urllib/request，避免 Python HTTP 连接的
+    TCP 复用触发反爬机制。curl 的行为与手动终端一致。
+    """
     prefix = "sh" if exchange == "SH" else "sz"
     symbol = f"{prefix}{code}"
 
     url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={symbol},day,,,{2000},"
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+
+    import subprocess
+    result = subprocess.run(
+        ["curl", "-s", "--connect-timeout", "10", "-m", "20", url],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30
+    )
+
+    if result.returncode != 0:
+        logger.warning(f"腾讯 {code} curl 失败: {result.stderr.decode()[:80]}")
+        return None
 
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-
-        klines = data.get("data", {}).get(symbol, {}).get("day", [])
-        if not klines:
-            klines = data.get("data", {}).get(symbol, {}).get("qfqday", [])
-
-        if not klines:
-            return None
-
-        records = []
-        for item in klines:
-            if not isinstance(item, (list, tuple)) or len(item) < 6:
-                continue
-            records.append({
-                "trade_date": str(item[0])[:10],
-                "open": float(item[1]),
-                "high": float(item[2]),
-                "low": float(item[3]),
-                "close": float(item[4]),
-                "volume": int(float(item[5])) if len(item) > 5 else 0,
-                "amount": float(item[6]) if len(item) > 6 else 0,
-            })
-        return records
-
+        import json
+        data = json.loads(result.stdout.decode("utf-8"))
     except Exception as e:
-        logger.error(f"腾讯拉取 {code} 失败: {e}")
+        logger.warning(f"腾讯 {code} JSON 解析失败: {e}")
         return None
+
+    klines = data.get("data", {}).get(symbol, {}).get("day", [])
+    if not klines:
+        klines = data.get("data", {}).get(symbol, {}).get("qfqday", [])
+
+    if not klines:
+        return None
+
+    records = []
+    for item in klines:
+        if not isinstance(item, (list, tuple)) or len(item) < 6:
+            continue
+        records.append({
+            "trade_date": str(item[0])[:10],
+            "open": float(item[1]),
+            "high": float(item[2]),
+            "low": float(item[3]),
+            "close": float(item[4]),
+            "volume": int(float(item[5])) if len(item) > 5 else 0,
+            "amount": float(item[6]) if len(item) > 6 else 0,
+        })
+    return records
 
 
 def main():
@@ -116,10 +125,8 @@ def main():
     args = parser.parse_args()
 
     logger.info("=" * 60)
-    logger.info("Phase 2: 历史日线数据全量拉取 (腾讯API)")
+    logger.info("Phase 2: 历史日线数据全量拉取 (腾讯API via curl)")
     logger.info("=" * 60)
-
-    _ensure_no_proxy()
 
     con = init_database()
 
@@ -150,6 +157,7 @@ def main():
     success_count = 0
     fail_count = 0
     consecutive_failures = 0
+    global_failure_threshold = 50  # 达到阈值暂停
 
     for i, (code, name, exchange) in enumerate(pending, 1):
         logger.info(f"[{i}/{len(pending)}] 拉取 {code} ({name})...")
@@ -161,13 +169,15 @@ def main():
                 logger.warning(f"  {code} 无数据")
                 fail_count += 1
                 consecutive_failures += 1
-                if consecutive_failures > 10:
-                    logger.warning("连续失败过多，暂停10秒...")
-                    time.sleep(10)
-                sleep_random(3, 5)
+                if consecutive_failures >= 10:
+                    pause_time = min(consecutive_failures * 6, 120)
+                    logger.warning(f"连续失败 {consecutive_failures} 次，暂停 {pause_time} 秒...")
+                    time.sleep(pause_time)
+                sleep_random(3, 6)
                 continue
 
             consecutive_failures = 0
+            logger.debug(f"  {code}: 获取 {len(records)} 条数据")
 
             batch_insert_size = 500
             for j in range(0, len(records), batch_insert_size):
@@ -208,15 +218,25 @@ def main():
             logger.info(f"  ✅ {code}: {bar_count} 条日线数据 ({dates[0]} ~ {dates[-1]})")
 
             completed_codes.add(code)
+
+            # 每50只保存进度
             if i % 50 == 0:
                 save_progress(completed_codes)
+
+            # 每100只额外暂停
+            if i % 100 == 0:
+                extra_pause = 30
+                logger.info(f"  【进度 {i}/{len(pending)}】额外暂停 {extra_pause} 秒...")
+                time.sleep(extra_pause)
 
         except Exception as e:
             logger.error(f"  ❌ {code} 失败: {e}")
             fail_count += 1
             consecutive_failures += 1
+            if consecutive_failures >= 5:
+                time.sleep(15)
 
-        # 随机延迟 1-5 秒，避免高频被封
+        # 正常随机延迟 3-8 秒
         sleep_random(3, 8)
 
     save_progress(completed_codes)
