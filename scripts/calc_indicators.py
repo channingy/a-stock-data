@@ -132,12 +132,12 @@ def main():
     for code, name in etfs:
         try:
             # 读取日线数据
-            df = con.execute(f"""
+            df = con.execute("""
                 SELECT trade_date, "open", "high", "low", "close", volume
                 FROM security_daily 
-                WHERE code = '{code}'
+                WHERE code = ?
                 ORDER BY trade_date ASC
-            """).fetchdf()
+            """, (code,)).fetchdf()
             
             if len(df) == 0 or len(df) < 10:
                 logger.debug(f"  {code}: 数据不足 ({len(df)} 条)，跳过")

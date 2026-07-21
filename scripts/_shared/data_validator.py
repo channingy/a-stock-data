@@ -24,9 +24,9 @@ class DataValidator:
             ORDER BY code
         """
         if code:
-            query += f" WHERE code = '{code}'"
-        
-        result = self.con.execute(query).fetchall()
+            query += " WHERE code = ?"
+
+        result = self.con.execute(query, (code,) if code else ()).fetchall()
         
         warnings = []
         errors = []
@@ -56,9 +56,9 @@ class DataValidator:
             FROM {table}
         """
         if code:
-            query += f" WHERE code = '{code}'"
+            query += f" WHERE code = ?"
         
-        row = self.con.execute(query).fetchone()
+        row = self.con.execute(query, (code,) if code else ()).fetchone()
         total = row[0]
         null_count = row[1]
         null_pct = (null_count / total * 100) if total > 0 else 0
@@ -83,9 +83,9 @@ class DataValidator:
                OR "open" <= 0 OR "high" <= 0 OR "low" <= 0 OR "close" <= 0
         """
         if code:
-            query += f" AND code = '{code}'"
+            query += " AND code = ?"
         
-        violations = self.con.execute(query).fetchone()[0]
+        violations = self.con.execute(query, (code,)).fetchone()[0]
         status = "PASS" if violations == 0 else "FAIL"
         logger.info(f"价格逻辑检查: {status} — {violations} 条异常")
         
@@ -99,9 +99,9 @@ class DataValidator:
             WHERE volume < 0
         """
         if code:
-            query += f" AND code = '{code}'"
+            query += " AND code = ?"
         
-        violations = self.con.execute(query).fetchone()[0]
+        violations = self.con.execute(query, (code,)).fetchone()[0]
         status = "PASS" if violations == 0 else "FAIL"
         logger.info(f"成交量检查: {status} — {violations} 条异常")
         
