@@ -15,18 +15,18 @@ class DataValidator:
     
     def validate_daily_bars(self, code=None):
         """验证日线记录数"""
-        query = """
+        where_clause = " WHERE code = ?" if code else ""
+        params = (code,) if code else ()
+        query = f"""
             SELECT code, COUNT(*) as bar_count,
                    MIN(trade_date) as first_date,
                    MAX(trade_date) as last_date
-            FROM security_daily
+            FROM security_daily{where_clause}
             GROUP BY code
             ORDER BY code
         """
-        if code:
-            query += " WHERE code = ?"
 
-        result = self.con.execute(query, (code,) if code else ()).fetchall()
+        result = self.con.execute(query, params).fetchall()
         
         warnings = []
         errors = []
@@ -48,17 +48,16 @@ class DataValidator:
     def validate_nulls(self, table="security_daily", code=None):
         """验证空值"""
         required_fields = ["open", "high", "low", "close", "volume"]
-        fields_str = ", ".join(required_fields)
         
+        where_clause = " WHERE code = ?" if code else ""
+        params = (code,) if code else ()
         query = f"""
             SELECT COUNT(*) as total,
                    SUM(CASE WHEN {" OR ".join(f'{f} IS NULL' for f in required_fields)} THEN 1 ELSE 0 END) as null_count
-            FROM {table}
+            FROM {table}{where_clause}
         """
-        if code:
-            query += f" WHERE code = ?"
         
-        row = self.con.execute(query, (code,) if code else ()).fetchone()
+        row = self.con.execute(query, params).fetchone()
         total = row[0]
         null_count = row[1]
         null_pct = (null_count / total * 100) if total > 0 else 0
@@ -78,14 +77,16 @@ class DataValidator:
         query = """
             SELECT COUNT(*) as violations
             FROM security_daily
-            WHERE high < GREATEST("open", "close")
+            WHERE (high < GREATEST("open", "close")
                OR low > LEAST("open", "close")
-               OR "open" <= 0 OR "high" <= 0 OR "low" <= 0 OR "close" <= 0
+               OR "open" <= 0 OR "high" <= 0 OR "low" <= 0 OR "close" <= 0)
         """
+        params = ()
         if code:
             query += " AND code = ?"
+            params = (code,)
         
-        violations = self.con.execute(query, (code,)).fetchone()[0]
+        violations = self.con.execute(query, params).fetchone()[0]
         status = "PASS" if violations == 0 else "FAIL"
         logger.info(f"价格逻辑检查: {status} — {violations} 条异常")
         
@@ -98,10 +99,12 @@ class DataValidator:
             FROM security_daily
             WHERE volume < 0
         """
+        params = ()
         if code:
             query += " AND code = ?"
+            params = (code,)
         
-        violations = self.con.execute(query, (code,)).fetchone()[0]
+        violations = self.con.execute(query, params).fetchone()[0]
         status = "PASS" if violations == 0 else "FAIL"
         logger.info(f"成交量检查: {status} — {violations} 条异常")
         
