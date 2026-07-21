@@ -22,6 +22,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.resolve()))
 
+# 绕过系统代理（macOS科学上网工具拦截东财/腾讯API）
+os.environ["NO_PROXY"] = "*"
+os.environ["no_proxy"] = "*"
+
 from scripts._shared.db_helper import init_database
 from scripts._shared.logger import setup_logger
 

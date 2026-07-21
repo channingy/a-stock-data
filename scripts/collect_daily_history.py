@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Phase 2: 历史日线数据全量拉取
 
-对每只ETF，拉取历史日线数据。
-使用腾讯财经 API 作为数据源（mootdx 连接不稳定时的备选方案）。
+通过东财 push2his API 拉取每只ETF的全部历史日线数据。
+东财接口一次可返回全量K线（5000+根），无需分段。
 
 用法:
   cd /Users/channing/Work/Trade/a-stock-data
@@ -61,10 +61,73 @@ def save_progress(completed_codes):
         )
 
 
-def fetch_daily_history_tencent(code, exchange="SH"):
-    """通过腾讯财经 API 拉取单只ETF的历史日线数据
+def fetch_daily_history_eastmoney(code, exchange="SH"):
+    """通过东财 push2his API 拉取单只ETF的全部历史日线
 
-    腾讯接口: https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=sh510050,day,,,100,qfq
+    Args:
+        code: 6位代码如 '510050'
+        exchange: 'SH' 或 'SZ'
+
+    Returns:
+        list of dicts with OHLCV data, or None on failure
+    """
+    try:
+        import requests
+
+        secid = f"1.{code}" if exchange == "SH" else f"0.{code}"
+
+        url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+        params = {
+            "secid": secid,
+            "fields1": "f1,f2,f3,f4,f5,f6",
+            "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
+            "klt": 101,
+            "fqt": 1,
+            "beg": 0,
+            "end": 20500000,
+            "smplct": 0,
+            "lmt": 10000,
+        }
+
+        resp = requests.get(url, params=params, timeout=15, headers={
+            "Referer": "https://quote.eastmoney.com/",
+            "User-Agent": "Mozilla/5.0",
+        })
+        data = resp.json()
+
+        if "data" not in data or "klines" not in data["data"]:
+            return None
+
+        klines = data["data"]["klines"]
+        if not klines:
+            return None
+
+        records = []
+        for kl in klines:
+            parts = kl.split(",")
+            if len(parts) < 7:
+                continue
+            records.append({
+                "trade_date": parts[0],
+                "open": float(parts[1]),
+                "high": float(parts[2]),
+                "low": float(parts[3]),
+                "close": float(parts[4]),
+                "volume": int(float(parts[5])),
+                "amount": float(parts[6]),
+            })
+
+        return records
+
+    except Exception as e:
+        logger.error(f"东财拉取 {code} 失败: {e}")
+        return None
+
+
+def fetch_daily_history_tencent(code, exchange="SH"):
+    """通过腾讯财经 API 拉取单只ETF的历史日线（备选）
+
+    腾讯接口单次最多返回2000根K线（约8年）。
 
     Args:
         code: 6位代码如 '510050'
@@ -79,24 +142,13 @@ def fetch_daily_history_tencent(code, exchange="SH"):
         prefix = "sh" if exchange == "SH" else "sz"
         symbol = f"{prefix}{code}"
 
-        # 拉取最近1000根日线（约4年）
-        url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={symbol},day,,,1000,qfq"
+        url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={symbol},day,,,{2000},"
         resp = requests.get(url, timeout=15)
         data = resp.json()
 
-        # 腾讯返回格式: data.{symbol}.day[] 或 data.{symbol}.day[]
-        key = symbol
-        if "data" not in data or key not in data.get("data", {}):
-            # 尝试另一种格式
-            for k in data.get("data", {}):
-                if isinstance(data["data"][k], dict) and "day" in data["data"][k]:
-                    key = k
-                    break
-
-        klines = data.get("data", {}).get(key, {}).get("day", [])
+        klines = data.get("data", {}).get(symbol, {}).get("day", [])
         if not klines:
-            # 尝试 qfq (前复权) 格式
-            klines = data.get("data", {}).get(key, {}).get("qfqday", [])
+            klines = data.get("data", {}).get(symbol, {}).get("qfqday", [])
 
         if not klines:
             return None
@@ -122,6 +174,16 @@ def fetch_daily_history_tencent(code, exchange="SH"):
         return None
 
 
+def fetch_daily_history_with_fallback(code, exchange="SH"):
+    """优先东财，失败则用腾讯备选"""
+    records = fetch_daily_history_eastmoney(code, exchange)
+    if records:
+        return records
+
+    logger.warning(f"{code} 东财失败，尝试腾讯备选...")
+    return fetch_daily_history_tencent(code, exchange)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Phase 2: 历史日线全量拉取")
     parser.add_argument("--resume", action="store_true", help="从上次中断处继续")
@@ -134,11 +196,13 @@ def main():
     logger.info("Phase 2: 历史日线数据全量拉取")
     logger.info("=" * 60)
 
+    # 绕过系统代理（macOS科学上网工具拦截东财/腾讯API）
+    os.environ["NO_PROXY"] = "*"
+    os.environ["no_proxy"] = "*"
+
     # 初始化
     con = init_database()
-    rate_limiter = MootdxRateLimiter(
-        call_interval=0.3, batch_size=100, batch_sleep=5
-    )
+    rate_limiter = MootdxRateLimiter(call_interval=1.0, batch_size=50, batch_sleep=10)
 
     # 获取ETF列表
     etfs = con.execute(
@@ -175,7 +239,7 @@ def main():
         logger.info(f"[{i}/{len(pending)}] 拉取 {code} ({name})...")
 
         try:
-            records = fetch_daily_history_tencent(code, exchange or "SH")
+            records = fetch_daily_history_with_fallback(code, exchange or "SH")
 
             if not records:
                 logger.warning(f"  {code} 无数据")
@@ -184,9 +248,9 @@ def main():
                 continue
 
             # 批量插入
-            batch_size = 500
-            for j in range(0, len(records), batch_size):
-                batch = records[j : j + batch_size]
+            batch_insert_size = 500
+            for j in range(0, len(records), batch_insert_size):
+                batch = records[j : j + batch_insert_size]
                 con.executemany(
                     """
                     INSERT OR REPLACE INTO security_daily
@@ -234,7 +298,7 @@ def main():
             )
             con.commit()
 
-            logger.info(f"  ✅ {code}: {bar_count} 条日线数据")
+            logger.info(f"  ✅ {code}: {bar_count} 条日线数据 ({dates[0]} ~ {dates[-1]})")
 
             # 标记完成
             completed_codes.add(code)
