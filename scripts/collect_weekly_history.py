@@ -208,7 +208,7 @@ def main():
                     pause_time = min(consecutive_failures * 6, 1800)
                     logger.warning(f"连续失败 {consecutive_failures} 次，暂停 {pause_time} 秒...")
                     time.sleep(pause_time)
-                sleep_random(10, 25)
+                sleep_random(3, 8)
                 continue
             
             consecutive_failures = 0
@@ -251,7 +251,7 @@ def main():
             # 每20只保存进度并额外暂停
             if i % 20 == 0:
                 save_progress(completed_codes)
-                extra_pause = 60
+                extra_pause = 15
                 logger.info(f"  【进度 {i}/{len(pending)}】额外暂停 {extra_pause} 秒...")
                 time.sleep(extra_pause)
         
@@ -260,7 +260,7 @@ def main():
             fail_count += 1
             consecutive_failures += 1
             if consecutive_failures >= 5:
-                time.sleep(1800)  # 30分钟
+                time.sleep(300)  # 5分钟
     
     save_progress(completed_codes)
     
