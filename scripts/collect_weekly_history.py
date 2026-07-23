@@ -9,9 +9,9 @@
 - month: 最多200条 (粒度太粗) ❌ 不推荐
 
 防封措施:
-  - 每只请求间隔 10-30 秒随机延迟
-  - 每20只额外暂停 60 秒
-  - 连续失败5次暂停 30 分钟
+  - 每只请求间隔 1.5-4 秒随机延迟（优化：快速完成）
+  - 每50只额外暂停 10 秒
+  - 连续失败3次暂停 60 秒
   - 使用 curl 而非 urllib (避免 TCP 连接复用触发反爬)
   - NO_PROXY=* 直连模式
 
@@ -68,7 +68,7 @@ def save_progress(completed_codes):
         }, f)
 
 
-def sleep_random(min_sec=10, max_sec=30):
+def sleep_random(min_sec=1.5, max_sec=4.0):
     delay = random.uniform(min_sec, max_sec)
     logger.debug(f"  等待 {delay:.1f} 秒...")
     time.sleep(delay)
@@ -176,13 +176,21 @@ def main():
         etfs = [e for e in etfs if e[0] in target_codes]
         logger.info(f"指定拉取 {len(etfs)} 只: {list(target_codes)}")
     
+    # Load both progress file AND check existing weekly data in DB
     completed_codes = set()
     if args.resume:
         completed_codes = load_progress()
-        logger.info(f"断点续传: 已完成 {len(completed_codes)} 只，跳过")
+        logger.info(f"断点续传(progress文件): 已完成 {len(completed_codes)} 只，跳过")
     
-    pending = [e for e in etfs if e[0] not in completed_codes]
-    logger.info(f"待处理: {len(pending)} 只 / {total_count} 只")
+    # Also skip ETFs that already have weekly data in DB
+    existing_weekly = set(con.execute("SELECT DISTINCT code FROM security_weekly").fetchall())
+    existing_codes = {row[0] for row in existing_weekly}
+    already_covered = len(existing_codes)
+    logger.info(f"security_weekly已有数据: {already_covered} 只ETF，跳过")
+    
+    combined_skip = completed_codes | existing_codes
+    pending = [e for e in etfs if e[0] not in combined_skip]
+    logger.info(f"待处理: {len(pending)} 只 / {total_count} 只 (跳过 {total_count - len(pending)} 只)")
     
     if not pending:
         logger.info("没有待处理品种，退出")
@@ -204,11 +212,11 @@ def main():
                 logger.warning(f"  {code} 无周线数据")
                 fail_count += 1
                 consecutive_failures += 1
-                if consecutive_failures >= 5:
-                    pause_time = min(consecutive_failures * 6, 1800)
+                if consecutive_failures >= 3:
+                    pause_time = min(consecutive_failures * 12, 60)
                     logger.warning(f"连续失败 {consecutive_failures} 次，暂停 {pause_time} 秒...")
                     time.sleep(pause_time)
-                sleep_random(3, 8)
+                sleep_random(1.5, 4.0)
                 continue
             
             consecutive_failures = 0
@@ -248,10 +256,10 @@ def main():
             
             completed_codes.add(code)
             
-            # 每20只保存进度并额外暂停
-            if i % 20 == 0:
+            # 每50只保存进度并额外暂停
+            if i % 50 == 0:
                 save_progress(completed_codes)
-                extra_pause = 15
+                extra_pause = 10
                 logger.info(f"  【进度 {i}/{len(pending)}】额外暂停 {extra_pause} 秒...")
                 time.sleep(extra_pause)
         
@@ -266,7 +274,7 @@ def main():
     
     logger.info("")
     logger.info("=" * 70)
-    logger.info("Phase 3 完成摘要:")
+    logger.info("Phase 4: 周线数据补全完成摘要")
     logger.info(f"  成功: {success_count} 只")
     logger.info(f"  失败: {fail_count} 只")
     logger.info(f"  总周线记录: {total_bars:,} 条")
