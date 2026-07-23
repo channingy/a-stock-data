@@ -161,14 +161,15 @@ def main():
     con = init_database()
     create_weekly_table(con)
     
-    # 获取需要补全的受限ETF列表 (total_daily_bars >= 2000)
-    query = """
+    # 获取所有有效ETF列表（不仅限于受限ETF）
+    all_etfs_query = """
         SELECT code, name, exchange FROM security_info 
-        WHERE type='ETF' AND exclude IS NULL AND total_daily_bars >= 2000
+        WHERE type='ETF' AND exclude IS NULL
         ORDER BY first_trade_date ASC
     """
-    etfs = con.execute(query).fetchall()
-    logger.info(f"需要补全的受限ETF总数: {len(etfs)} 只")
+    etfs = con.execute(all_etfs_query).fetchall()
+    total_count = len(etfs)
+    logger.info(f"需要补全周线数据的ETF总数: {total_count} 只")
     
     if args.codes:
         target_codes = set(args.codes.split(","))
@@ -181,7 +182,7 @@ def main():
         logger.info(f"断点续传: 已完成 {len(completed_codes)} 只，跳过")
     
     pending = [e for e in etfs if e[0] not in completed_codes]
-    logger.info(f"待处理: {len(pending)} 只")
+    logger.info(f"待处理: {len(pending)} 只 / {total_count} 只")
     
     if not pending:
         logger.info("没有待处理品种，退出")
